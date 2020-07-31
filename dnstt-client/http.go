@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -13,7 +14,7 @@ import (
 
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
-
+type DialFunc func(string, string) (net.Conn, error)
 // A default Retry-After delay to use when there is no explicit Retry-After
 // header in an HTTP response.
 const defaultRetryAfter = 10 * time.Second
@@ -21,6 +22,7 @@ const defaultRetryAfter = 10 * time.Second
 // The *http.Client shared by instances of HTTPPacketConn. We use this instead
 // of http.DefaultClient in order to set a timeout.
 var httpClient = &http.Client{Timeout: 1 * time.Minute}
+var rT = newRoundTripper(net.Dial, clientHelloIDMap["hellofirefix_65"], false)
 
 // HTTPPacketConn is an HTTP-based transport for DNS messages, used for DNS over
 // HTTPS (DoH). Its WriteTo and ReadFrom methods exchange DNS messages over HTTP
@@ -78,7 +80,8 @@ func (c *HTTPPacketConn) send(p []byte) error {
 	req.Header.Set("Accept", "application/dns-message")
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("User-Agent", "") // Disable default "Go-http-client/1.1".
-	resp, err := httpClient.Do(req)
+	// resp, err := httpClient.Do(req)
+	resp, err := rT.RoundTrip(req)
 	if err != nil {
 		return err
 	}
