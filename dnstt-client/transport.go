@@ -15,11 +15,17 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+ /* This file was modified to fit the specifications of dnstt rather than meeklite.
+  * Most notably, the Roundtrip method does not actually perform a http,Transport.roundtrip
+  * but a http.Client.Do in order to preserve a single TLS connection between the dnstt-client
+  * and DoH resolver, rather than create a new connection for every request made
+  */
+
  package main
 
  import (
 	 "crypto/tls"
-	 "crypto/x509"
+	 //"crypto/x509"
 	 "errors"
 	 "fmt"
 	 "net"
@@ -28,7 +34,7 @@
 	 "strconv"
 	 "strings"
 	 "sync"
- 
+	 "time"
 	 "gitlab.com/yawning/obfs4.git/transports/base"
 	 utls "gitlab.com/yawning/utls.git"
 	 "golang.org/x/net/http2"
@@ -60,72 +66,76 @@
 	 defaultClientHello = &utls.HelloFirefox_Auto
  )
  
- type roundTripper struct {
+ type httpClientWrapper struct {
 	 sync.Mutex
  
 	 clientHelloID *utls.ClientHelloID
 	 dialFn        base.DialFunc
 	 transport     http.RoundTripper
- 
+     client        http.Client
 	 initConn    net.Conn
 	 disableHPKP bool
  }
  
- func (rt *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+ func (wrap *httpClientWrapper) RoundTrip(req *http.Request) (*http.Response, error) {
 	 // Note: This isn't protected with a lock, since the meeklite ioWorker
-	 // serializes RoundTripper requests.
+	 // serializes httpClientWrapper requests.
 	 //
 	 // This also assumes that req.URL.Host will remain constant for the
-	 // lifetime of the roundTripper, which is a valid assumption for meeklite.
-	 if rt.transport == nil {
-		 if err := rt.getTransport(req); err != nil {
+	 // lifetime of the httpClientWrapper, which is a valid assumption for meeklite.
+	 if wrap.transport == nil {
+		 if err := wrap.getTransport(req); err != nil {
 			 return nil, err
 		 }
 	 }
-	 return rt.transport.RoundTrip(req)
+	 //actually perform a http,Client.do instead of a roundtrip.
+	 return wrap.client.Do(req)
  }
  
- func (rt *roundTripper) getTransport(req *http.Request) error {
-	fmt.Println(req.URL.Scheme)
-	 switch strings.ToLower(req.URL.Scheme) {
-	 case "http":
-		 rt.transport = newHTTPTransport(rt.dialFn, nil)
-		 return nil
-	 case "https":
-		rt.transport = newHTTPTransport(rt.dialFn, nil)
-		return nil
-	 default:
-		 return fmt.Errorf("invalid URL scheme: '%v'", req.URL.Scheme)
-	 }
+ func (wrap *httpClientWrapper) getTransport(req *http.Request) error {
+	// fmt.Println(req.URL.Scheme)
+	//  switch strings.ToLower(req.URL.Scheme) {
+	//  case "http":
+	// 	 wrap.transport = newHTTPTransport(wrap.dialFn, nil)
+	// 	 return nil
+	//  case "https":
+	// 	wrap.transport = newHTTPTransport(wrap.dialFn, nil)
+	// 	return nil
+	//  default:
+	// 	 return fmt.Errorf("invalid URL scheme: '%v'", req.URL.Scheme)
+	//  }
  
-	 _, err := rt.dialTLS("tcp", getDialTLSAddr(req.URL))
-	 switch err {
-	 case errProtocolNegotiated:
-	 case nil:
-		 // Should never happen.
-		 panic("dialTLS returned no error when determining transport")
-	 default:
-		 return err
+	wrap.dialTLS("tcp", getDialTLSAddr(req.URL))
+	//  switch err {
+	//  case nil:
+	// 	 // Should never happen.
+	// 	 panic("dialTLS returned no error when determining transport")
+	//  case errProtocolNegotiated:
+	//  default:
+	// 	 return err
+	//  }
+	 wrap.client = http.Client{
+		 Timeout: 1 * time.Minute,
+		 Transport: wrap.transport,
 	 }
- 
 	 return nil
  }
  
- func (rt *roundTripper) dialTLS(network, addr string) (net.Conn, error) {
-	 // Unlike rt.transport, this is protected by a critical section
+ func (wrap *httpClientWrapper) dialTLS(network, addr string) (net.Conn, error) {
+	 // Unlike wrap.transport, this is protected by a critical section
 	 // since past the initial manual call from getTransport, the HTTP
 	 // client will be the caller.
-	 rt.Lock()
-	 defer rt.Unlock()
+	 wrap.Lock()
+	 defer wrap.Unlock()
  
 	 // If we have the connection from when we determined the HTTPS
 	 // transport to use, return that.
-	 if conn := rt.initConn; conn != nil {
-		 rt.initConn = nil
+	 if conn := wrap.initConn; conn != nil {
+		 wrap.initConn = nil
 		 return conn, nil
 	 }
  
-	 rawConn, err := rt.dialFn(network, addr)
+	 rawConn, err := wrap.dialFn(network, addr)
 	 if err != nil {
 		 return nil, err
 	 }
@@ -135,10 +145,10 @@
 		 host = addr
 	 }
  
-	 var verifyPeerCertificateFn func([][]byte, [][]*x509.Certificate) error
-	//  if !rt.disableHPKP {
+	// var verifyPeerCertificateFn func([][]byte, [][]*x509.Certificate) error
+	//  if !wrap.disableHPKP {
 	// 	 if pinHost, ok := builtinPinDB.HasPins(host); ok {
-	// 		 if rt.transport == nil {
+	// 		 if wrap.transport == nil {
 	// 			 log.Debugf("HPKP enabled for host: %v", pinHost)
 	// 		 }
 	// 		 verifyPeerCertificateFn = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
@@ -149,25 +159,25 @@
 	// 			 return nil
 	// 		 }
 	// 	 }
-	//  } else if rt.transport == nil {
+	//  } else if wrap.transport == nil {
 	// 	 log.Warnf("HPKP disabled for host: %v", host)
 	//  }
  
 	 conn := utls.UClient(rawConn, &utls.Config{
 		 ServerName:            host,
-		 VerifyPeerCertificate: verifyPeerCertificateFn,
+		// VerifyPeerCertificate: verifyPeerCertificateFn,
  
 		 // `crypto/tls` gradually ramps up the record size.  While this is
 		 // a good optimization and is a relatively common server feature,
 		 // neither Firefox nor Chromium appear to use such optimizations.
 		 DynamicRecordSizingDisabled: true,
-	 }, *rt.clientHelloID)
+	 }, *wrap.clientHelloID)
 	 if err = conn.Handshake(); err != nil {
 		 conn.Close()
 		 return nil, err
 	 }
  
-	 if rt.transport != nil {
+	 if wrap.transport != nil {
 		 return conn, nil
 	 }
  
@@ -176,21 +186,21 @@
 	 switch conn.ConnectionState().NegotiatedProtocol {
 	 case http2.NextProtoTLS:
 		 // The remote peer is speaking HTTP 2 + TLS.
-		 rt.transport = &http2.Transport{DialTLS: rt.dialTLSHTTP2}
+		 wrap.transport = &http2.Transport{DialTLS: wrap.dialTLSHTTP2}
 	 default:
 		 // Assume the remote peer is speaking HTTP 1.x + TLS.
-		 rt.transport = newHTTPTransport(nil, rt.dialTLS)
+		 wrap.transport = newHTTPTransport(nil, wrap.dialTLS)
 	 }
  
 	 // Stash the connection just established for use servicing the
 	 // actual request (should be near-immediate).
-	 rt.initConn = conn
+	 wrap.initConn = conn
  
 	 return nil, errProtocolNegotiated
  }
  
- func (rt *roundTripper) dialTLSHTTP2(network, addr string, cfg *tls.Config) (net.Conn, error) {
-	 return rt.dialTLS(network, addr)
+ func (wrap *httpClientWrapper) dialTLSHTTP2(network, addr string, cfg *tls.Config) (net.Conn, error) {
+	 return wrap.dialTLS(network, addr)
  }
  
  func getDialTLSAddr(u *url.URL) string {
@@ -203,8 +213,8 @@
 	 return net.JoinHostPort(u.Host, strconv.Itoa(pInt))
  }
  
- func newRoundTripper(dialFn base.DialFunc, clientHelloID *utls.ClientHelloID, disableHPKP bool) http.RoundTripper {
-	 return &roundTripper{
+ func newHttpClientWrapper(dialFn base.DialFunc, clientHelloID *utls.ClientHelloID, disableHPKP bool) http.RoundTripper {
+	 return &httpClientWrapper{
 		 clientHelloID: clientHelloID,
 		 dialFn:        dialFn,
 		 disableHPKP:   disableHPKP,
