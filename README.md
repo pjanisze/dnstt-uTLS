@@ -345,6 +345,6 @@ query); the logged value is the minimum that is guaranteed to be
 supported in any response.
 
 
-## Custom TLS Fingerprinting support
+## Custom TLS Fingerprint support
 This fork uses uTLS to mask the fingerprint of dnstt. The code used is adapted from the obfs4 repository in regards to the integration of uTLS with the meeklite transport. 
 See transport.go in http-client directory for main set of changes. The fingerprint can be modified in http-client/http.go by changing the second parameter of `newHttpClientWrapper`
