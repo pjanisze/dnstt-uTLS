@@ -16,15 +16,19 @@ import (
 
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
+
 type DialFunc func(string, string) (net.Conn, error)
+
 // A default Retry-After delay to use when there is no explicit Retry-After
 // header in an HTTP response.
 const defaultRetryAfter = 10 * time.Second
 
 // The *http.Client shared by instances of HTTPPacketConn. We use this instead
 // of http.DefaultClient in order to set a timeout.
-var httpClient = &http.Client{Timeout: 1 * time.Minute}
-var wrap = newHttpClientWrapper(net.Dial, clientHelloIDMap["hellofirefix_65"], false)
+//var httpClient = &http.Client{Timeout: 1 * time.Minute}
+// A *http.Client shared by instances of HTTPPacketConn. We use this to utilize uTLS
+// which modifies the connections fingerprint
+var wrap = newHttpClientWrapper(net.Dial, clientHelloIDMap["hellochrome_auto"])
 
 // HTTPPacketConn is an HTTP-based transport for DNS messages, used for DNS over
 // HTTPS (DoH). Its WriteTo and ReadFrom methods exchange DNS messages over HTTP
@@ -83,7 +87,7 @@ func (c *HTTPPacketConn) send(p []byte) error {
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("User-Agent", "") // Disable default "Go-http-client/1.1".
 	// resp, err := httpClient.Do(req)
-	resp, err := wrap.RoundTrip(req)
+	resp, err := wrap.Do(req)
 	if err != nil {
 		return err
 	}
@@ -157,8 +161,10 @@ func (c *HTTPPacketConn) sendLoop() {
 		}
 		
 		// Rate-limit traffic to evade censor detection.
-		time.Sleep(time.Duration(exponential(0.25)))
-		log.Printf("Current Time %v", time.Now())
+		a := exponential(163)
+		log.Printf("a: %v", a)
+		time.Sleep(time.Duration(a) * time.Second)
+		log.Printf("Current Time %v -------- a: %v", time.Now(), a)
 
 		err := c.send(p)
 		if err != nil {
