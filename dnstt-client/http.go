@@ -6,6 +6,8 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
+	"math/rand"
 	"net"
 	"net/http"
 	"strconv"
@@ -136,6 +138,10 @@ func (c *HTTPPacketConn) send(p []byte) error {
 	return nil
 }
 
+func exponential(lambda float64) float64 {
+	return -(1 / float64(lambda)) * math.Log(1 - rand.Float64())
+}
+
 // sendLoop loops over the contents of the outgoing queue and passes them to
 // send. It drops packets while c.notBefore is in the future.
 func (c *HTTPPacketConn) sendLoop() {
@@ -149,6 +155,10 @@ func (c *HTTPPacketConn) sendLoop() {
 			// Drop it.
 			continue
 		}
+		
+		// Rate-limit traffic to evade censor detection.
+		time.Sleep(time.Duration(exponential(0.25)))
+		log.Printf("Current Time %v", time.Now())
 
 		err := c.send(p)
 		if err != nil {

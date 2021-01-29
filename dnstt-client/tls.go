@@ -6,8 +6,11 @@ import (
 	"encoding/binary"
 	"io"
 	"log"
+	"math"
+	"math/rand"
 	"net"
 	"sync"
+	"time"
 
 	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
@@ -101,6 +104,10 @@ func (c *TLSPacketConn) recvLoop(conn net.Conn) error {
 	}
 }
 
+func exponential(lambda float64) float64 {
+	return -(1 / float64(lambda)) * math.Log(1 - rand.Float64())
+}
+
 // sendLoop reads messages from the outgoing queue and writes them,
 // length-prefixed, to conn.
 func (c *TLSPacketConn) sendLoop(conn net.Conn) error {
@@ -114,6 +121,11 @@ func (c *TLSPacketConn) sendLoop(conn net.Conn) error {
 		if err != nil {
 			return err
 		}
+
+		// Rate-limit traffic to evade censor detection.
+		time.Sleep(time.Duration(exponential(0.25)))
+		log.Printf("Current Time %v", time.Now())
+
 		_, err = bw.Write(p)
 		if err != nil {
 			return err
